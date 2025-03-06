@@ -1,0 +1,5 @@
+pandas
+numpy
+yfinance
+xgboost
+alpaca-trade-api

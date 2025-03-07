@@ -82,7 +82,7 @@ def main():
 
     # Save processed data
     base_name = os.path.splitext(os.path.basename(input_file))[0].replace("_data", "")
-    output_file = f"{base_name}_features.csv"
+    output_file = f"data/{base_name}_features.csv"
     save_processed_data(data, output_file)
 
 if __name__ == "__main__":

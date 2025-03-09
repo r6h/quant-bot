@@ -5,3 +5,4 @@ xgboost
 alpaca-trade-api
 ta
 scikit-learn
+dotenv

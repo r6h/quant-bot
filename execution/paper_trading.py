@@ -7,9 +7,9 @@ from ta.momentum import RSIIndicator
 import os
 import time
 from datetime import datetime, timedelta
-from dotenv import laod_dotenv
+from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv("secrets.env")
 
 API_KEY = os.environ.get("ALPACA_API_KEY")
 SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")

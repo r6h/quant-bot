@@ -9,20 +9,23 @@ import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-load_dotenv("secrets.env")
+load_dotenv()
 
-API_KEY = os.environ.get("ALPACA_API_KEY")
-SECRET_KEY = os.environ.get("ALPACA_SECRET_KEY")
+API_KEY = os.environ.get("APCA-API-KEY-ID")
+SECRET_KEY = os.environ.get("APCA-API-SECRET-KEY")
 BASE_URL = "https://paper-api.alpaca.markets"
+
+if not API_KEY or not SECRET_KEY:
+    raise ValueError("API_KEY or SECRET_KEY not found in the environment")
 
 def load_model(model_file):
     with open(model_file, "rb") as f:
         model = pickle.load(f)
     return model
 
-def fetch_recent_data(api, ticker, days=30):
-    """Fetch recent OHLCV data from Alpaca."""
-    end_date = datetime.now()
+def fetch_recent_data(api, ticker, days=20):
+    """Fetch recent OHLCV data from Alpaca, ending a week ago"""
+    end_date = (datetime.now().date() - timedelta(days=7))
     start_date = end_date - timedelta(days=days)
     bars = api.get_bars(
         ticker,
@@ -86,7 +89,7 @@ def execute_trade(api, ticker, prediction, capital=10000, risk_per_trade=0.01):
         except:
             print(f"No position in {ticker} to sell.")
 
-def main():
+def main(test_mode=True):
     ticker = "AAPL"
     model_file = f"models/{ticker.lower()}_model.pkl"
 
@@ -95,29 +98,38 @@ def main():
     print(f"Loading model for {ticker}...")
     model = load_model(model_file)
     
-    # Run in a loop (e.g., check daily at 3 PM EST)
-    while True:
-        now = datetime.now()
-        if now.hour == 15 and now.minute == 0:
-            print(f"Checking market at {now}")
+    if test_mode:
+        # Run once immediately for testing
+        print(f"Running in test mode at {datetime.now()}...")
+        data = fetch_recent_data(api, ticker)
+        data = compute_features(data)
+        prediction = get_prediction(model, data)
+        print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
+        execute_trade(api, ticker, 1) # Change 1 for prediction, currently overides prediction
+    else:
+        # LIVE MODE: run daily at 3 PM EST
+        while True:
+            now = datetime.now()
+            if now.hour == 15 and now.minute == 0:
+                print(f"Checking market at {now}")
 
-            # Fetch and process data
-            print(f"Fetching recent data for {ticker}...")
-            data = fetch_recent_data(api, ticker)
-            data = compute_features(data)
+                # Fetch and process data
+                print(f"Fetching recent data for {ticker}...")
+                data = fetch_recent_data(api, ticker)
+                data = compute_features(data)
 
-            # Predict
-            prediction = get_prediction(model, data)
-            print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
-            
-            # Execute trade
-            execute_trade(api, ticker, prediction)
-            
-            # Wait until next day
-            time.sleep(60)  # Sleep 1 minute to avoid rapid looping
-        else:
-            print(f"Waiting for 3 PM EST... Current time: {now}")
-            time.sleep(60)
+                # Predict
+                prediction = get_prediction(model, data)
+                print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
+                
+                # Execute trade
+                execute_trade(api, ticker, prediction)
+                
+                # Wait until next day
+                time.sleep(60)  # Sleep 1 minute to avoid rapid looping
+            else:
+                print(f"Waiting for 3 PM EST... Current time: {now}")
+                time.sleep(60)
 
 if __name__ == "__main__":
     if not os.path.exists("execution"):

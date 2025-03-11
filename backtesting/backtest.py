@@ -70,7 +70,7 @@ def calculate_metrics(test_data, capital=10000):
     
     return test_data
 
-def main():
+def main(test_mode=True):
     ticker = "AAPL"  # Hardcoded for now
     model_file = f"models/{ticker.lower()}_model.pkl"
     features_file = f"data/{ticker.lower()}_features.csv"
@@ -82,7 +82,7 @@ def main():
     data, X = prepare_backtest_data(data)
     
     print("Running backtest with risk management...")
-    test_data = run_backtest(model, data, X, capital=10000, risk_per_trade=0.01, stop_loss=0.05)
+    test_data = run_backtest(model, data, X, capital=10000, risk_per_trade=0.03, stop_loss=0.05)
     
     print("Calculating performance metrics...")
     test_data = calculate_metrics(test_data, capital=10000)
@@ -96,4 +96,4 @@ if __name__ == "__main__":
     # Create backtesting directory if it doesn't exist
     if not os.path.exists("backtesting"):
         os.makedirs("backtesting")
-    main()
+    main(test_mode=True)

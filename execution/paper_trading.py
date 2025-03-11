@@ -4,10 +4,15 @@ import numpy as np
 from alpaca_trade_api import REST
 from ta.trend import SMAIndicator
 from ta.momentum import RSIIndicator
+
 import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+from monitoring.logger import log_trade
 
 load_dotenv()
 
@@ -58,19 +63,27 @@ def execute_trade(api, ticker, prediction, capital=10000, risk_per_trade=0.01):
     """Execute a trade based on prediction."""
     account = api.get_account()
     cash = float(account.cash)
+    print(f"Current cash: ${cash:.2f}")
+
+    order = None
 
     if prediction == 1:
         price  = float(api.get_latest_bar(ticker).close)
         position_size = (capital * risk_per_trade) / price  # Shares to buy
-        if cash >= position_size * price:
-            api.submit_order(
+        position_size = round(position_size, 4)
+        cost = position_size * price
+        
+        if cash >= cost:
+            order = api.submit_order(
                 symbol=ticker,
                 qty=str(position_size),
                 side='buy',
                 type='market',
                 time_in_force='day'
             )
-            print(f"Placed buy order for {position_size:.2f} shares of {ticker} at ${price:.2f}")
+            print(f"Placed buy order for {position_size:.2f} shares of {ticker} at ${price:.2f} (Cost ${cost:.2f})")
+            print(f"Order ID: {order.id}, Status: {order.status}")
+            log_trade(ticker, "buy", position_size, price)
         else:
             print("Insufficient cash to place buy order.")
     else:
@@ -78,16 +91,21 @@ def execute_trade(api, ticker, prediction, capital=10000, risk_per_trade=0.01):
         try:
             position = api.get_position(ticker)
             qty = float(position.qty)
-            api.submit_order(
+            price = float(api.get_latest_bar(ticker).close)
+            order = api.submit_order(
                 symbol=ticker,
                 qty=str(qty),
                 side='sell',
                 type='market',
                 time_in_force='day'
             )
-            print(f"Placed sell order for {qty:.2f} shares of {ticker}")
+            print(f"Placed sell order for {qty:.2f} shares of {ticker} at ${price:.2f}")
+            log_trade(ticker, "sell", qty, price)
         except:
             print(f"No position in {ticker} to sell.")
+    
+    if order:  # Only print if order was submitted
+        print(f"Order ID: {order.id}, Status: {order.status}")
 
 def main(test_mode=True):
     ticker = "AAPL"
@@ -98,14 +116,28 @@ def main(test_mode=True):
     print(f"Loading model for {ticker}...")
     model = load_model(model_file)
     
+    # TEST MODE, PLACE ORDERS AT RUNTIME
     if test_mode:
         # Run once immediately for testing
         print(f"Running in test mode at {datetime.now()}...")
         data = fetch_recent_data(api, ticker)
         data = compute_features(data)
-        prediction = get_prediction(model, data)
+        
+        # Test buy first
+        print("Testing buy order...")
+        prediction = 1  # Force buy
         print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
-        execute_trade(api, ticker, 1) # Change 1 for prediction, currently overides prediction
+        execute_trade(api, ticker, prediction)
+        
+        print("Waiting 10 seconds to simulate next day...")
+        time.sleep(10)
+        
+        # Test sell
+        print("Testing sell order...")
+        prediction = 0  # Force sell
+
+        print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
+        execute_trade(api, ticker, prediction) # Change 1 for prediction method, currently overides prediction
     else:
         # LIVE MODE: run daily at 3 PM EST
         while True:

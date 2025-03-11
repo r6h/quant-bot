@@ -1,3 +1,4 @@
+*.ignore
 components.md
 secrets.env
 

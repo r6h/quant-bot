@@ -3,6 +3,7 @@ import xgboost as xgb
 from sklearn.model_selection import train_test_split
 import pickle
 import os
+import argparse
 
 def load_features(filename):
     """
@@ -35,13 +36,26 @@ def prepare_data(data):
     # Drop the last row (no next day to predict)
     data = data.dropna()
     
-    # Features: SMA_14, RSI_14, Close_Lag1
-    X = data[['SMA_14', 'RSI_14', 'Close_Lag1']]
+    # Define feature sets
+    technical_features = ['SMA_14', 'RSI_14', 'Close_Lag1']
+    
+    # Check if sentiment features are available
+    sentiment_features = ['sentiment_score', 'news_count', 'negative', 'neutral', 'positive']
+    available_features = technical_features.copy()
+    
+    for feature in sentiment_features:
+        if feature in data.columns:
+            available_features.append(feature)
+    
+    print(f"Using features: {', '.join(available_features)}")
+    
+    # Use all available features
+    X = data[available_features]
     y = data['Target']
 
     return X, y
 
-def train_model(X, y, test_size=0.2):
+def train_model(X, y, test_size=0.2, n_estimators=100, learning_rate=0.1, max_depth=6):
     """
     Train an XGBoost model with time-based split.
     
@@ -49,6 +63,9 @@ def train_model(X, y, test_size=0.2):
         X (pandas.DataFrame): Features.
         y (pandas.Series): Target.
         test_size (float): Fraction of data for testing.
+        n_estimators (int): Number of trees for XGBoost.
+        learning_rate (float): Learning rate for XGBoost.
+        max_depth (int): Maximum tree depth for XGBoost.
     
     Returns:
         model: Trained XGBoost model.
@@ -60,8 +77,31 @@ def train_model(X, y, test_size=0.2):
     y_train, y_test = y.iloc[:split_index], y.iloc[split_index:]
 
     # Train XGBoost model
-    model = xgb.XGBClassifier(random_state=42, eval_metric="logloss")
-    model.fit(X_train, y_train)
+    model = xgb.XGBClassifier(
+        random_state=42, 
+        eval_metric="logloss",
+        n_estimators=n_estimators,
+        learning_rate=learning_rate,
+        max_depth=max_depth
+    )
+    
+    # Fit model with early stopping
+    model.fit(
+        X_train, 
+        y_train,
+        eval_set=[(X_test, y_test)],
+        early_stopping_rounds=10,
+        verbose=False
+    )
+
+    # Print feature importance
+    importances = pd.DataFrame({
+        'feature': X_train.columns,
+        'importance': model.feature_importances_
+    }).sort_values('importance', ascending=False)
+    
+    print("\nFeature Importance:")
+    print(importances)
 
     return model, X_train, X_test, y_train, y_test
 
@@ -73,13 +113,33 @@ def save_model(model, filename):
         model: Trained model.
         filename (str): Path to save the model.
     """
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    
     with open(filename, 'wb') as f:
         pickle.dump(model, f)
     print(f"Model saved to {filename}")
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Train stock prediction model")
+    parser.add_argument("--ticker", type=str, default="AAPL", help="Stock ticker symbol")
+    parser.add_argument("--test-size", type=float, default=0.2, 
+                       help="Fraction of data to use for testing (default: 0.2)")
+    parser.add_argument("--n-estimators", type=int, default=100,
+                       help="Number of trees for XGBoost (default: 100)")
+    parser.add_argument("--learning-rate", type=float, default=0.1,
+                       help="Learning rate for XGBoost (default: 0.1)")
+    parser.add_argument("--max-depth", type=int, default=6,
+                       help="Maximum tree depth for XGBoost (default: 6)")
+    
+    args = parser.parse_args()
+    
+    ticker = args.ticker.upper()
+    ticker_lower = ticker.lower()
+    
     # Load features
-    input_file = "data/aapl_features.csv"
+    input_file = f"data/{ticker_lower}_features.csv"
     print(f"Loading features from {input_file}...")
     data = load_features(input_file)
 
@@ -89,7 +149,13 @@ def main():
 
     # Train model
     print("Training XGBoost model...")
-    model, X_train, X_test, y_train, y_test = train_model(X, y)
+    model, X_train, X_test, y_train, y_test = train_model(
+        X, y, 
+        test_size=args.test_size,
+        n_estimators=args.n_estimators,
+        learning_rate=args.learning_rate,
+        max_depth=args.max_depth
+    )
 
     # Basic evaluation
     train_score = model.score(X_train, y_train)
@@ -98,8 +164,7 @@ def main():
     print(f"Testing accuracy: {test_score:.4f}")
 
     # Save model
-    base_name = os.path.splitext(os.path.basename(input_file))[0].replace("_features", "")
-    model_file = f"models/{base_name}_model.pkl"
+    model_file = f"models/{ticker_lower}_model.pkl"
     save_model(model, model_file)
 
 if __name__ == "__main__":

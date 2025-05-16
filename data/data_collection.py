@@ -1,6 +1,8 @@
 import yfinance as yf
 import pandas as pd
 from datetime import datetime, timedelta
+import os
+import argparse
 
 def fetch_stock_data(ticker, start_date, end_date):
     """
@@ -29,37 +31,53 @@ def fetch_stock_data(ticker, start_date, end_date):
 
         # Select only the columns we are interested in
         data = data[["Date", "Open", "High", "Low", "Close", "Volume"]]
-
+        
         # Convert Date to just the date part (remove time if present)
         data["Date"] = pd.to_datetime(data["Date"]).dt.date
 
         return data
     
     except Exception as e:
-        print(f"Erroe fetching data: {e}")
+        print(f"Error fetching data: {e}")
         return None
 
 def save_data_to_csv(data, filename):
     """
-    Save the fetched data to a CSV file.
+    Save the stock data to a CSV file.
     
     Args:
-        data (pandas.DataFrame): The data to save.
+        data (pandas.DataFrame): Stock data to save.
         filename (str): Path to the output CSV file.
     """
-    if data is not None:
-        data.to_csv(filename, index=False)
-        print(f"Data saved to {filename}")
-    else:
-        print("No data to save.")
+    # Ensure data directory exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    
+    # Save the data
+    data.to_csv(filename, index=False)
+    print(f"Data saved to {filename}")
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Fetch historical stock data")
+    parser.add_argument("--ticker", type=str, default="AAPL", help="Stock ticker symbol")
+    parser.add_argument("--days", type=int, default=1825, help="Number of days of data to fetch (default: 1825 days/5 years)")
+    parser.add_argument("--start_date", type=str, help="Start date in YYYY-MM-DD format (overrides days parameter)")
+    parser.add_argument("--end_date", type=str, default=datetime.today().strftime("%Y-%m-%d"), 
+                        help="End date in YYYY-MM-DD format (default: today)")
+    
+    args = parser.parse_args()
+    
     # Define the stock ticker and date range
-    ticker = "AAPL"
+    ticker = args.ticker
 
-    # Define the date range (e.g., last 5 years up to today)
-    end_date = datetime.today().strftime("%Y-%m-%d")
-    start_date = (datetime.today() - timedelta(days=5*365)).strftime("%Y-%m-%d")  # Approx 5 years ago
+    # Define the date range
+    end_date = args.end_date
+    
+    if args.start_date:
+        start_date = args.start_date
+    else:
+        # Calculate start date based on number of days
+        start_date = (datetime.today() - timedelta(days=args.days)).strftime("%Y-%m-%d")
 
     # Fetch the data
     print(f"Fetching the data for {ticker} from {start_date} to {end_date}")
@@ -80,7 +98,7 @@ def main():
         filename = f"data/{ticker.lower()}_data.csv"  # Dynamic filename based on ticker
         save_data_to_csv(stock_data, filename)
     else:
-        print("Failed to fetch data. Check ticker, dates, or connection.")
+        print(f"Failed to fetch data for {ticker}.")
 
 if __name__ == "__main__":
     main()

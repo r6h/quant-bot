@@ -13,6 +13,7 @@ import time
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from monitoring.logger import log_trade
+from data.sentiment_fetcher import FinancialNewsFetcher
 
 load_dotenv()
 
@@ -44,68 +45,155 @@ def fetch_recent_data(api, ticker, days=20):
     bars.columns = ["Date", "Open", "High", "Low", "Close", "Volume"]
     return bars
 
-def compute_features(data):
+def compute_features(data, ticker=None, include_sentiment=True):
     """Compute features for prediction."""
+    # Technical indicators
     sma = SMAIndicator(close=data['Close'], window=14)
     rsi = RSIIndicator(close=data['Close'], window=14)
     data['SMA_14'] = sma.sma_indicator()
     data['RSI_14'] = rsi.rsi()
     data['Close_Lag1'] = data['Close'].shift(1)
+    
+    # Add sentiment features if requested
+    if include_sentiment and ticker:
+        try:
+            # Get the most recent date in the data
+            latest_date = pd.to_datetime(data['Date']).max()
+            
+            # Define a date range that includes today for fetching the most recent sentiment
+            start_date = (latest_date - timedelta(days=5)).strftime('%Y-%m-%d')
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            
+            # Initialize the news fetcher
+            news_fetcher = FinancialNewsFetcher()
+            
+            # Fetch and analyze sentiment
+            sentiment_data = news_fetcher.fetch_and_analyze(ticker, start_date, end_date)
+            
+            if not sentiment_data.empty:
+                # Get only the most recent sentiment data
+                daily_sentiment = news_fetcher.aggregate_daily_sentiment(sentiment_data)
+                
+                # Get the most recent sentiment (last row)
+                if not daily_sentiment.empty:
+                    latest_sentiment = daily_sentiment.iloc[-1]
+                    
+                    # Add sentiment features to the data
+                    data['sentiment_score'] = latest_sentiment['sentiment_score']
+                    data['news_count'] = latest_sentiment['news_count']
+                    data['negative'] = latest_sentiment['negative']
+                    data['neutral'] = latest_sentiment['neutral']
+                    data['positive'] = latest_sentiment['positive']
+                else:
+                    # Add neutral sentiment if none found
+                    data['sentiment_score'] = 0
+                    data['news_count'] = 0
+                    data['negative'] = 0.333
+                    data['neutral'] = 0.333
+                    data['positive'] = 0.333
+            else:
+                # Add neutral sentiment if none found
+                data['sentiment_score'] = 0
+                data['news_count'] = 0
+                data['negative'] = 0.333
+                data['neutral'] = 0.333
+                data['positive'] = 0.333
+                
+        except Exception as e:
+            print(f"Error fetching sentiment data: {e}")
+            # Add neutral sentiment in case of error
+            data['sentiment_score'] = 0
+            data['news_count'] = 0
+            data['negative'] = 0.333
+            data['neutral'] = 0.333
+            data['positive'] = 0.333
+    
     return data.dropna()
 
 def get_prediction(model, data):
     """Make a prediction using the latest data."""
-    X = data.tail(1)[['SMA_14', 'RSI_14', 'Close_Lag1']]
-    prediction = model.predict(X)[0]
-    return prediction
-
-def execute_trade(api, ticker, prediction, capital=10000, risk_per_trade=0.01):
-    """Execute a trade based on prediction."""
-    account = api.get_account()
-    cash = float(account.cash)
-    print(f"Current cash: ${cash:.2f}")
-
-    order = None
-
-    if prediction == 1:
-        price  = float(api.get_latest_bar(ticker).close)
-        position_size = (capital * risk_per_trade) / price  # Shares to buy
-        position_size = round(position_size, 4)
-        cost = position_size * price
-        
-        if cash >= cost:
-            order = api.submit_order(
-                symbol=ticker,
-                qty=str(position_size),
-                side='buy',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Placed buy order for {position_size:.2f} shares of {ticker} at ${price:.2f} (Cost ${cost:.2f})")
-            print(f"Order ID: {order.id}, Status: {order.status}")
-            log_trade(ticker, "buy", position_size, price)
-        else:
-            print("Insufficient cash to place buy order.")
-    else:
-        # Sell if holding a position
-        try:
-            position = api.get_position(ticker)
-            qty = float(position.qty)
-            price = float(api.get_latest_bar(ticker).close)
-            order = api.submit_order(
-                symbol=ticker,
-                qty=str(qty),
-                side='sell',
-                type='market',
-                time_in_force='day'
-            )
-            print(f"Placed sell order for {qty:.2f} shares of {ticker} at ${price:.2f}")
-            log_trade(ticker, "sell", qty, price)
-        except:
-            print(f"No position in {ticker} to sell.")
+    # Check for available features in the model
+    model_features = model.get_booster().feature_names
+    available_cols = [col for col in model_features if col in data.columns]
     
-    if order:  # Only print if order was submitted
-        print(f"Order ID: {order.id}, Status: {order.status}")
+    # Extract only the features used by the model
+    X = data.tail(1)[available_cols]
+    
+    # Make prediction
+    prediction = model.predict(X)[0]
+    
+    # Get prediction probability
+    probability = model.predict_proba(X)[0][1]  # Probability of positive class
+    
+    return prediction, probability
+
+def execute_trade(api, ticker, prediction, probability=None, threshold=0.55):
+    """Execute a trade based on the prediction."""
+    # Get account information to determine position size
+    account = api.get_account()
+    buying_power = float(account.buying_power)
+    position_size = buying_power * 0.02  # Using 2% of buying power
+    
+    # Check current position
+    try:
+        position = api.get_position(ticker)
+        has_position = True
+    except:
+        has_position = False
+    
+    # Get latest market price
+    latest_trade = api.get_latest_trade(ticker)
+    price = latest_trade.price
+    
+    # Calculate number of shares
+    shares = int(position_size / price)
+    
+    # Make trading decision
+    # Only buy with sufficient confidence if probability is provided
+    if probability is not None:
+        buy_signal = prediction == 1 and probability > threshold
+    else:
+        buy_signal = prediction == 1
+    
+    sell_signal = prediction == 0
+    
+    # Execute trade
+    if buy_signal and not has_position and shares > 0:
+        print(f"Buying {shares} shares of {ticker} at ${price:.2f}")
+        api.submit_order(
+            symbol=ticker,
+            qty=shares,
+            side="buy",
+            type="market",
+            time_in_force="day"
+        )
+        log_trade(ticker, "buy", shares, price)
+        return "BUY"
+    
+    elif sell_signal and has_position:
+        print(f"Selling all shares of {ticker} at ${price:.2f}")
+        api.submit_order(
+            symbol=ticker,
+            qty=position.qty,
+            side="sell",
+            type="market",
+            time_in_force="day"
+        )
+        log_trade(ticker, "sell", int(float(position.qty)), price)
+        return "SELL"
+    
+    else:
+        action = "HOLD"
+        if buy_signal:
+            reason = "but already have position" if has_position else "but unable to buy shares"
+            print(f"Buy signal for {ticker} {reason}")
+        elif sell_signal:
+            reason = "but no position to sell"
+            print(f"Sell signal for {ticker} {reason}")
+        else:
+            print(f"No clear signal for {ticker}, holding")
+        
+        return action
 
 def main(test_mode=True):
     ticker = "AAPL"
@@ -121,7 +209,7 @@ def main(test_mode=True):
         # Run once immediately for testing
         print(f"Running in test mode at {datetime.now()}...")
         data = fetch_recent_data(api, ticker)
-        data = compute_features(data)
+        data = compute_features(data, ticker=ticker, include_sentiment=True)
         
         # Test buy first
         print("Testing buy order...")
@@ -135,9 +223,8 @@ def main(test_mode=True):
         # Test sell
         print("Testing sell order...")
         prediction = 0  # Force sell
-
         print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
-        execute_trade(api, ticker, prediction) # Change 1 for prediction method, currently overides prediction
+        execute_trade(api, ticker, prediction)
     else:
         # LIVE MODE: run daily at 3 PM EST
         while True:
@@ -148,22 +235,26 @@ def main(test_mode=True):
                 # Fetch and process data
                 print(f"Fetching recent data for {ticker}...")
                 data = fetch_recent_data(api, ticker)
-                data = compute_features(data)
+                data = compute_features(data, ticker=ticker, include_sentiment=True)
 
                 # Predict
-                prediction = get_prediction(model, data)
-                print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'}")
+                prediction, probability = get_prediction(model, data)
+                print(f"Prediction for {ticker} tomorrow: {'Up' if prediction == 1 else 'Down'} with {probability:.2%} confidence")
                 
                 # Execute trade
-                execute_trade(api, ticker, prediction)
+                execute_trade(api, ticker, prediction, probability)
                 
                 # Wait until next day
                 time.sleep(60)  # Sleep 1 minute to avoid rapid looping
             else:
-                print(f"Waiting for 3 PM EST... Current time: {now}")
-                time.sleep(60)
+                # Check every 30 seconds
+                time.sleep(30)
 
 if __name__ == "__main__":
-    if not os.path.exists("execution"):
-        os.makedirs("execution")
-    main()
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Run paper trading bot")
+    parser.add_argument("--live", action="store_true", help="Run in live mode")
+    args = parser.parse_args()
+    
+    main(test_mode=not args.live)

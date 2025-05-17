@@ -1,0 +1,1 @@
+# Currently only one strategy is implemented. When more strategies are added, this file will be refactored to have a class for each strategy keeping the codebase modular.

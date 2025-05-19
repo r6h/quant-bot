@@ -6,3 +6,5 @@ alpaca-trade-api
 ta
 scikit-learn
 dotenv
+torch
+transformers

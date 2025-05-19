@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import numpy as np
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class FinancialNewsFetcher:
     """
@@ -38,63 +41,35 @@ class FinancialNewsFetcher:
     def _fetch_news_api(self, ticker, start_date, end_date, api_key=None):
         """
         Fetch financial news for a ticker symbol using an API.
-        This is a placeholder - replace with your preferred API service.
-        
-        Example APIs you might consider:
-        - Alpha Vantage
-        - News API
-        - Finnhub
-        - Polygon.io
         """
         if api_key is None:
-            api_key = os.environ.get("NEWS_API_KEY")
+            api_key = os.getenv("NEWS_API_KEY")  # Changed from os.environ.get to os.getenv
             if not api_key:
-                raise ValueError("API key required. Set NEWS_API_KEY environment variable or pass as parameter")
+                raise ValueError("API key required. Set NEWS_API_KEY in .env file or pass as parameter")
         
-        # This is a placeholder. Replace with your preferred API 
-        # URL = f"https://api.example.com/news"
-        # params = {
-        #     "apiKey": api_key,
-        #     "symbol": ticker,
-        #     "from": start_date,
-        #     "to": end_date
-        # }
-        # response = requests.get(URL, params=params)
-        # if response.status_code == 200:
-        #     return response.json()
-        # else:
-        #     print(f"Error fetching news: {response.status_code}")
-        #     return None
-        
-        # For testing, generate some dummy news data
-        # In a real implementation, replace this with actual API calls
-        dummy_data = []
-        current_date = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
-        
-        while current_date <= end:
-            # Generate 1-3 news items per day
-            for _ in range(np.random.randint(1, 4)):
-                sentiment = np.random.choice(["positive", "negative", "neutral"], 
-                                            p=[0.3, 0.2, 0.5])
-                
-                if sentiment == "positive":
-                    headline = f"{ticker} reports strong growth in quarterly earnings"
-                elif sentiment == "negative":
-                    headline = f"{ticker} facing challenges, stock price drops"
-                else:
-                    headline = f"{ticker} maintains stable performance in volatile market"
-                
-                dummy_data.append({
-                    "date": current_date.strftime("%Y-%m-%d"),
-                    "headline": headline,
-                    "source": "Dummy News Provider",
-                    "url": "https://example.com"
+        URL = f"https://finnhub.io/api/v1/company-news"
+        params = {
+            "symbol": ticker,
+            "from": start_date,
+            "to": end_date,
+            "token": api_key
+        }
+        response = requests.get(URL, params=params)
+        if response.status_code == 200:
+            news_json = response.json()
+            # Finnhub returns a list of news dicts with 'headline', 'datetime', etc.
+            news_data = []
+            for item in news_json:
+                news_data.append({
+                    "date": datetime.utcfromtimestamp(item["datetime"]).strftime("%Y-%m-%d"),
+                    "headline": item["headline"],
+                    "source": item.get("source", ""),
+                    "url": item.get("url", "")
                 })
-            
-            current_date += timedelta(days=1)
-        
-        return dummy_data
+            return news_data
+        else:
+            print(f"Error fetching news: {response.status_code}")
+            return None
     
     def analyze_sentiment(self, texts):
         """
